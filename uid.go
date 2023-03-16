@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -14,35 +15,44 @@ import (
 
 const (
 	// Ambigues characters
-	// O -> 0
-	// I -> 1
-	// S -> 5
-	// U -> V
+	// 	'O' -> '0'
+	// 	'I' -> '1'
+	// 	'S' -> '5'
+	// 	'U' -> 'V'
 	charset = "0123456789ABCDEFGHJKLMNPQRTVWXYZ"
 	lenstr  = 16
-	// 1byte cluster id
-	// 4byte unix second timstamp
-	// 2byte counter
-	// 3byte random
-	lenid   = 10
+
+	// Structure
+	// 	- 1 byte cluster id
+	// 	- 4 byte unix second timstamp
+	// 	- 2 byte counter
+	// 	- 3 byte random
+	lenbyt  = 10
 	bytemax = 0xff
 
-	// Unix timestamp of Nov 04 2010 01:42:54 UTC in seconds; match with twitter snowflake epoch
-	// You may customize this to set a different epoch for your application.
+	// Unix timestamp of Nov 04 2010 01:42:54 UTC in seconds,
+	// you may customize this to set a different epoch for your application.
 	SnowflakeEpoch int64 = 1288834974
 )
 
-// decoder maps lookup table is stolen from [rid](https://github.com/solutionroute/rid)
-var dec [256]byte
+// decoder maps lookup table is stolen from [solutionroute/rid]
+//
+// [solutionroute/rid]: https://github.com/solutionroute/rid
+var decoder [256]byte
 
 func init() {
 	// initialize the decoding map, used also for sanity checking input
-	for i := 0; i < len(dec); i++ {
-		dec[i] = bytemax
+	for i := 0; i < len(decoder); i++ {
+		decoder[i] = bytemax
 	}
 
-	for i := 0; i < len(charset); i++ {
-		dec[charset[i]] = byte(i)
+	for i, c := range charset {
+		decoder[c] = byte(i)
+	}
+
+	// case insensitive decode
+	for i, c := range strings.ToLower(charset) {
+		decoder[c] = byte(i)
 	}
 }
 
@@ -62,12 +72,10 @@ func New(lastEpoch int64, lastCounter uint16, clusterID uint8) Generator {
 	}
 }
 
-func (gen *Generator) NewID() ID {
+func (gen *Generator) NewID() (id ID) {
 	if !gen.init {
 		panic("generator is not properly initialized")
 	}
-
-	var id ID
 
 	now := time.Now().Unix() - gen.epoch
 	id[0] = gen.clusterID                                                          // 1byte cluster id
@@ -78,7 +86,10 @@ func (gen *Generator) NewID() ID {
 	return id
 }
 
-var ErrIDStringInvalidLength = errors.New("ErrIDStringInvalidLength")
+var (
+	ErrInvalidStringLength = errors.New("ErrInvalidStringLength")
+	ErrInvalidStringChar   = errors.New("ErrInvalidStringChar")
+)
 
 func (gen *Generator) Extract(id ID) (uint8, time.Time, uint16, [3]byte) {
 	ts := int64(binary.BigEndian.Uint32(id[1:5])) + gen.epoch
@@ -88,7 +99,9 @@ func (gen *Generator) Extract(id ID) (uint8, time.Time, uint16, [3]byte) {
 		[3]byte(id[7:10])
 }
 
-// loop unrooling in encode and decode functions are stolen from [rid](https://github.com/solutionroute/rid)
+// loop unrooling in encode and decode functions are stolen from [solutionroute/rid]
+//
+// [solutionroute/rid]: https://github.com/solutionroute/rid
 func encode(id ID) string {
 	var dst [lenstr]byte
 
@@ -112,31 +125,34 @@ func encode(id ID) string {
 	return string(dst[:])
 }
 
-// loop unrooling in encode and decode functions are stolen from [rid](https://github.com/solutionroute/rid)
+// loop unrooling in encode and decode functions are stolen from [solutionroute/rid]
+//
+// [solutionroute/rid]: https://github.com/solutionroute/rid
 func decode(id []byte, str string) error {
-	if len(str) != lenstr {
-		return ErrIDStringInvalidLength
+	if err := validate(str); err != nil {
+		return err
 	}
+
 	_ = str[15] // eliminate bound check
 	_ = id[9]   // eliminate bound check
 
-	id[9] = dec[str[14]]<<5 | dec[str[15]]
-	id[8] = dec[str[12]]<<7 | dec[str[13]]<<2 | dec[str[14]]>>3
-	id[7] = dec[str[11]]<<4 | dec[str[12]]>>1
-	id[6] = dec[str[9]]<<6 | dec[str[10]]<<1 | dec[str[11]]>>4
-	id[5] = dec[str[8]]<<3 | dec[str[9]]>>2
-	id[4] = dec[str[6]]<<5 | dec[str[7]]
-	id[3] = dec[str[4]]<<7 | dec[str[5]]<<2 | dec[str[6]]>>3
-	id[2] = dec[str[3]]<<4 | dec[str[4]]>>1
-	id[1] = dec[str[1]]<<6 | dec[str[2]]<<1 | dec[str[3]]>>4
-	id[0] = dec[str[0]]<<3 | dec[str[1]]>>2
+	id[9] = decoder[str[14]]<<5 | decoder[str[15]]
+	id[8] = decoder[str[12]]<<7 | decoder[str[13]]<<2 | decoder[str[14]]>>3
+	id[7] = decoder[str[11]]<<4 | decoder[str[12]]>>1
+	id[6] = decoder[str[9]]<<6 | decoder[str[10]]<<1 | decoder[str[11]]>>4
+	id[5] = decoder[str[8]]<<3 | decoder[str[9]]>>2
+	id[4] = decoder[str[6]]<<5 | decoder[str[7]]
+	id[3] = decoder[str[4]]<<7 | decoder[str[5]]<<2 | decoder[str[6]]>>3
+	id[2] = decoder[str[3]]<<4 | decoder[str[4]]>>1
+	id[1] = decoder[str[1]]<<6 | decoder[str[2]]<<1 | decoder[str[3]]>>4
+	id[0] = decoder[str[0]]<<3 | decoder[str[1]]>>2
 
 	return nil
 }
 
 var Empty ID
 
-type ID [lenid]byte
+type ID [lenbyt]byte
 
 func Parse(str string) (id ID, err error) {
 	return id, decode(id[:], str)
@@ -190,10 +206,6 @@ func (id ID) MarshalText() (text []byte, err error) {
 
 // UnmarshalText implements [encoding.TextUnmarshaler]
 func (id *ID) UnmarshalText(text []byte) error {
-	if len(text) != lenstr {
-		return ErrIDStringInvalidLength
-	}
-
 	return decode((*id)[:], unsafeBytesToString(text))
 }
 
@@ -204,8 +216,8 @@ func (id ID) MarshalBinary() (data []byte, err error) {
 
 // UnmarshalBinary implements [encoding.BinaryUnmarshaler]
 func (id *ID) UnmarshalBinary(data []byte) error {
-	if len(data) != lenid {
-		return errors.New("could not unmarshal binary; invalid input")
+	if len(data) != lenbyt {
+		return ErrInvalidStringLength
 	}
 
 	return decode((*id)[:], unsafeBytesToString(data))
@@ -213,4 +225,23 @@ func (id *ID) UnmarshalBinary(data []byte) error {
 
 func unsafeBytesToString(p []byte) string {
 	return unsafe.String(unsafe.SliceData(p), len(p))
+}
+
+func validate(str string) error {
+	if len(str) != lenstr {
+		return ErrInvalidStringLength
+	}
+
+	if res := decoder[str[0]] | decoder[str[1]] |
+		decoder[str[2]] | decoder[str[3]] |
+		decoder[str[4]] | decoder[str[5]] |
+		decoder[str[6]] | decoder[str[7]] |
+		decoder[str[8]] | decoder[str[9]] |
+		decoder[str[10]] | decoder[str[11]] |
+		decoder[str[12]] | decoder[str[13]] |
+		decoder[str[14]] | decoder[str[15]]; res == bytemax {
+		return ErrInvalidStringChar
+	}
+
+	return nil
 }

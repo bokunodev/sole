@@ -13,26 +13,25 @@ import "core:mem"
 //	'S' -> '5'
 //	'U' -> 'V'
 charset := "0123456789ABCDEFGHJKLMNPQRTVWXYZ"
+charset_lower := "0123456789abcdefghjklmnpqrtvwxyz"
 
 @(private)
 _length_str :: 16
 
-// - 1byte cluster id
-// - 4byte unix second timstamp in bigendian order
-// - 2byte counter in bigendian order
-// - 3byte random
+// - 1 byte cluster id
+// - 4 byte unix second timstamp in bigendian order
+// - 2 byte counter in bigendian order
+// - 3 byte random
 @(private)
 _length_byt :: 10
 
 @(private)
 _byte_max :: 0xff
 
-// Unix timestamp of Nov 04 2010 01:42:54 UTC in seconds
-//
-// match with twitter snowflake epoch
+// Unix timestamp of `Nov 04 2010 01:42:54 UTC` in seconds, twitter snowflake's epoch.
 snowflake_epoch :: i64(1288834974)
 
-// _decoder maps lookup table was stolen from [rid](https://github.com/solutionroute/rid)
+// _decoder maps lookup table was stolen from [solutionroute/rid](https://github.com/solutionroute/rid)
 @(private)
 _decoder := [~u8(0)]byte {
 	0 ..< ~u8(0) = _byte_max,
@@ -41,6 +40,10 @@ _decoder := [~u8(0)]byte {
 @(init)
 _decoder_init :: proc() {
 	for c, i in charset {
+		_decoder[c] = byte(i)
+	}
+
+	for c, i in charset_lower {
 		_decoder[c] = byte(i)
 	}
 }
@@ -158,7 +161,7 @@ encode :: proc(uid: UID) -> string {
 
 // encode_builder, encode `UID` into a string and write it to `sb`
 //
-// loop unrooling tips was stolen from [rid](https://github.com/solutionroute/rid)
+// loop unrooling tips was stolen from [solutionroute/rid](https://github.com/solutionroute/rid)
 encode_builder :: proc(sb: ^strings.Builder, uid: UID) {
 	dst: [_length_str]byte
 	
@@ -184,7 +187,7 @@ encode_builder :: proc(sb: ^strings.Builder, uid: UID) {
 	//odinfmt: enable
 
 	if strings.write_bytes(sb, dst[:]) < _length_str {
-		panic("strings.write_bytes failed")
+		panic("strings.write_bytes too short")
 	}
 }
 
@@ -194,14 +197,32 @@ DecodeError :: enum {
 }
 
 @(private)
-_validate :: proc(str: string) -> DecodeError {
+_validate :: proc(str: string) -> DecodeError #no_bounds_check {
 	if len(str) != _length_str {
 		return .ErrInvalidStringLength
 	}
-
-	if !strings.contains_any(charset, str) {
+	
+	//odinfmt: disable
+	res := _decoder[str[0 ]] |
+		   _decoder[str[1 ]] |
+		   _decoder[str[2 ]] |
+		   _decoder[str[3 ]] |
+		   _decoder[str[4 ]] |
+		   _decoder[str[5 ]] |
+		   _decoder[str[6 ]] |
+		   _decoder[str[7 ]] |
+		   _decoder[str[8 ]] |
+		   _decoder[str[9 ]] |
+		   _decoder[str[10]] |
+		   _decoder[str[11]] |
+		   _decoder[str[12]] |
+		   _decoder[str[13]] |
+		   _decoder[str[14]] |
+		   _decoder[str[15]]
+	if res == _byte_max {
 		return .ErrInvalidStringChar
 	}
+	//odinfmt: enable
 
 	return nil
 }
@@ -209,11 +230,9 @@ _validate :: proc(str: string) -> DecodeError {
 // decode, validate and decode string `str`,
 // return the decoded `UID` and a `DecodeError` if any
 //
-// loop unrooling tips was stolen from [rid](https://github.com/solutionroute/rid)
+// loop unrooling tips was stolen from [solutionroute/rid](https://github.com/solutionroute/rid)
 decode :: proc(str: string) -> (uid: UID, err: DecodeError) {
-	if err = _validate(str); err != nil {
-		return uid, err
-	}
+	_validate(str) or_return
 	
 	//odinfmt: disable
 	#no_bounds_check {
