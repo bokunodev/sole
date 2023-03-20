@@ -11,16 +11,16 @@ import "core:mem"
 //	'O' -> '0'
 //	'I' -> '1'
 //	'S' -> '5'
-//	'U' -> 'V'
-charset := "0123456789ABCDEFGHJKLMNPQRTVWXYZ"
-charset_lower := "0123456789abcdefghjklmnpqrtvwxyz"
+//	'B' -> '8'
+charset := "0123456789ACDEFGHJKLMNPQRTUVWXYZ"
+charset_lower := "0123456789acdefghjklmnpqrtuvwxyz"
 
 @(private)
 _length_str :: 16
 
 // - 1 byte cluster id
 // - 4 byte unix second timstamp in bigendian order
-// - 2 byte counter in bigendian order
+// - 2 byte sequence in bigendian order
 // - 3 byte random
 @(private)
 _length_byt :: 10
@@ -33,8 +33,8 @@ snowflake_epoch :: i64(1288834974)
 
 // _decoder maps lookup table was stolen from [solutionroute/rid](https://github.com/solutionroute/rid)
 @(private)
-_decoder := [~u8(0)]byte {
-	0 ..< ~u8(0) = _byte_max,
+_decoder := [0xff]byte {
+	0 ..< 0xff = _byte_max,
 }
 
 @(init)
@@ -49,33 +49,31 @@ _decoder_init :: proc() {
 }
 
 @(private)
+now_proc :: #type proc(_: i64) -> i64
+
+@(private)
+_time_now :: proc(epoch: i64) -> i64 {
+	return time.to_unix_seconds(time.now()) - epoch
+}
+
+@(private)
 _Generator :: struct {
-	epoch:      i64,
-	counter:    u16,
-	cluster_id: u8,
-	init:       bool,
+	epoch:    i64,
+	sequence: u32,
+	init:     bool,
+	now:      now_proc,
 }
 
 Generator :: struct {
 	_Generator: _Generator,
 }
 
-// init_generator, properly initialize a `Generator`
-init_generator :: #force_inline proc(gen: ^Generator, epoch: i64, counter: u16, cluster_id: u8) {
+// init, properly initialize a `Generator`
+init :: #force_inline proc(gen: ^Generator, epoch: i64, sequence: u32, cluster_id: u8) {
 	gen._Generator.epoch = epoch
-	gen._Generator.counter = counter
-	gen._Generator.cluster_id = cluster_id
+	gen._Generator.sequence = sequence
 	gen._Generator.init = true
-}
-
-// new_generator, creates and properly initialize a `Generator`
-new_generator :: #force_inline proc(epoch: i64, counter: u16, cluster_id: u8) -> (gen: Generator) {
-	gen._Generator.epoch = epoch
-	gen._Generator.counter = counter
-	gen._Generator.cluster_id = cluster_id
-	gen._Generator.init = true
-
-	return gen
+	gen._Generator.now = _time_now
 }
 
 UID :: [_length_byt]byte
@@ -86,45 +84,37 @@ generate_uid :: proc(gen: ^Generator) -> (uid: UID) {
 		panic("generator is not properly initialized")
 	}
 
-	// 1byte cluster id
-	uid[0] = gen._Generator.cluster_id
-
 	// 4byte timestamp
-	timestamp := u32be(_time_now_u32(gen._Generator.epoch))
-	mem.copy(mem.raw_data(uid[1:5]), &timestamp, size_of(timestamp))
+	timestamp := u32be(gen._Generator.now(gen._Generator.epoch))
+	mem.copy(mem.raw_data(uid[0:4]), &timestamp, size_of(timestamp))
 
-	// 2byte counter
+	// 4byte sequence
 	//
 	// Note: sync.atomic_add behaves the same as libc's [atomic_add](https://en.cppreference.com/w/c/atomic/atomic_fetch_add),
 	// atomically replaces the value pointed by `ptr` with the result of addition of `delta` to the old value of `ptr`,
 	// and returns the value `ptr` held previously
 	//
 	// we add 1 to make it behaves the same as atomic package in Go
-	counter := u16be(sync.atomic_add(&gen._Generator.counter, 1) + 1)
-	mem.copy(mem.raw_data(uid[5:7]), &counter, size_of(counter))
+	sequence := u32be(sync.atomic_add(&gen._Generator.sequence, 1) + 1)
+	mem.copy(mem.raw_data(uid[4:8]), &sequence, size_of(sequence))
 
-	// 3byte random
-	crypto.rand_bytes(uid[7:10])
+	// 2byte random
+	crypto.rand_bytes(uid[8:10])
 
 	return uid
 }
 
 @(private)
-_time_now_u32 :: #force_inline proc(epoch: i64) -> u32 {
-	return u32(time.to_unix_seconds(time.now()) - epoch)
-}
-
-@(private)
 _extract_timestamp :: #force_inline proc(gen: ^Generator, uid: UID) -> time.Time {
 	uid := uid
-	temp := mem.reinterpret_copy(u32be, mem.raw_data(uid[1:5]))
+	temp := mem.reinterpret_copy(u32be, mem.raw_data(uid[0:4]))
 	return time.unix(i64(temp) + gen._Generator.epoch, 0)
 }
 
 @(private)
-_extract_counter :: #force_inline proc(uid: UID) -> u16 {
+_extract_sequence :: #force_inline proc(uid: UID) -> u32 {
 	uid := uid
-	return u16(mem.reinterpret_copy(u16be, mem.raw_data(uid[5:7])))
+	return u32(mem.reinterpret_copy(u32be, mem.raw_data(uid[4:8])))
 }
 
 // extract, extracts information from a `UID`
@@ -132,16 +122,14 @@ extract :: proc(
 	gen: ^Generator,
 	uid: UID,
 ) -> (
-	cluster_id: u8,
 	timestamp: time.Time,
-	counter: u16,
-	random: [3]byte,
+	sequence: u32,
+	random: [2]byte,
 ) {
 	uid := uid
 
-	cluster_id = uid[0]
 	timestamp = _extract_timestamp(gen, uid)
-	counter = _extract_counter(uid)
+	sequence = _extract_sequence(uid)
 	copy(random[:], uid[7:10])
 
 	return

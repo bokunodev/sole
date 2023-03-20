@@ -18,15 +18,14 @@ const (
 	// 	'O' -> '0'
 	// 	'I' -> '1'
 	// 	'S' -> '5'
-	// 	'U' -> 'V'
-	charset = "0123456789ABCDEFGHJKLMNPQRTVWXYZ"
+	// 	'B' -> '8'
+	charset = "0123456789ACDEFGHJKLMNPQRTUVWXYZ"
 	lenstr  = 16
 
 	// Structure
-	// 	- 1 byte cluster id
 	// 	- 4 byte unix second timstamp
-	// 	- 2 byte counter
-	// 	- 3 byte random
+	// 	- 4 byte counter
+	// 	- 2 byte random
 	lenbyt  = 10
 	bytemax = 0xff
 
@@ -57,18 +56,18 @@ func init() {
 }
 
 type Generator struct {
-	epoch     int64
-	counter   uint32
-	clusterID uint8
-	init      bool
+	now      func() int64
+	epoch    int64
+	sequence uint32
+	init     bool
 }
 
-func New(lastEpoch int64, lastCounter uint16, clusterID uint8) Generator {
+func New(epoch int64, sequence uint32) Generator {
 	return Generator{
-		epoch:     lastEpoch,
-		counter:   uint32(lastCounter),
-		clusterID: clusterID,
-		init:      true,
+		epoch:    epoch,
+		sequence: sequence,
+		init:     true,
+		now:      func() int64 { return time.Now().Unix() },
 	}
 }
 
@@ -77,11 +76,9 @@ func (gen *Generator) NewID() (id ID) {
 		panic("generator is not properly initialized")
 	}
 
-	now := time.Now().Unix() - gen.epoch
-	id[0] = gen.clusterID                                                          // 1byte cluster id
-	binary.BigEndian.PutUint32(id[1:5], uint32(now))                               // 4byte timestamp
-	binary.BigEndian.PutUint16(id[5:7], uint16(atomic.AddUint32(&gen.counter, 1))) // 2byte counter
-	rand.Read(id[7:10])                                                            // 3byte random
+	binary.BigEndian.PutUint32(id[0:4], uint32(gen.now()-gen.epoch))        // 4byte timestamp
+	binary.BigEndian.PutUint32(id[4:8], atomic.AddUint32(&gen.sequence, 1)) // 4byte counter
+	rand.Read(id[8:10])                                                     // 2byte random
 
 	return id
 }
@@ -91,12 +88,12 @@ var (
 	ErrInvalidStringChar   = errors.New("ErrInvalidStringChar")
 )
 
-func (gen *Generator) Extract(id ID) (uint8, time.Time, uint16, [3]byte) {
-	ts := int64(binary.BigEndian.Uint32(id[1:5])) + gen.epoch
+func (gen *Generator) Extract(id ID) (time.Time, uint32, [2]byte) {
+	ts := int64(binary.BigEndian.Uint32(id[0:4])) + gen.epoch
 
-	return id[0], time.Unix(ts, 0),
-		binary.BigEndian.Uint16(id[5:7]),
-		[3]byte(id[7:10])
+	return time.Unix(ts, 0),
+		binary.BigEndian.Uint32(id[4:8]),
+		[2]byte(id[8:10])
 }
 
 // loop unrooling in encode and decode functions are stolen from [solutionroute/rid]
@@ -128,24 +125,27 @@ func encode(id ID) string {
 // loop unrooling in encode and decode functions are stolen from [solutionroute/rid]
 //
 // [solutionroute/rid]: https://github.com/solutionroute/rid
-func decode(id []byte, str string) error {
-	if err := validate(str); err != nil {
+func decode(id []byte, src string) error {
+	if err := validate(src); err != nil {
 		return err
 	}
 
-	_ = str[15] // eliminate bound check
-	_ = id[9]   // eliminate bound check
+	// bounds checking compiler optimization
+	// go tool compile -d=ssa/check_bce/debug=1 rid.go
+	_ = src[15] // early bound check
+	_ = id[9]   // early bound check
 
-	id[9] = decoder[str[14]]<<5 | decoder[str[15]]
-	id[8] = decoder[str[12]]<<7 | decoder[str[13]]<<2 | decoder[str[14]]>>3
-	id[7] = decoder[str[11]]<<4 | decoder[str[12]]>>1
-	id[6] = decoder[str[9]]<<6 | decoder[str[10]]<<1 | decoder[str[11]]>>4
-	id[5] = decoder[str[8]]<<3 | decoder[str[9]]>>2
-	id[4] = decoder[str[6]]<<5 | decoder[str[7]]
-	id[3] = decoder[str[4]]<<7 | decoder[str[5]]<<2 | decoder[str[6]]>>3
-	id[2] = decoder[str[3]]<<4 | decoder[str[4]]>>1
-	id[1] = decoder[str[1]]<<6 | decoder[str[2]]<<1 | decoder[str[3]]>>4
-	id[0] = decoder[str[0]]<<3 | decoder[str[1]]>>2
+	// this is ~4 to 6x faster than stdlib Base32 decoding
+	id[9] = decoder[src[14]]<<5 | decoder[src[15]]
+	id[8] = decoder[src[12]]<<7 | decoder[src[13]]<<2 | decoder[src[14]]>>3
+	id[7] = decoder[src[11]]<<4 | decoder[src[12]]>>1
+	id[6] = decoder[src[9]]<<6 | decoder[src[10]]<<1 | decoder[src[11]]>>4
+	id[5] = decoder[src[8]]<<3 | decoder[src[9]]>>2
+	id[4] = decoder[src[6]]<<5 | decoder[src[7]]
+	id[3] = decoder[src[4]]<<7 | decoder[src[5]]<<2 | decoder[src[6]]>>3
+	id[2] = decoder[src[3]]<<4 | decoder[src[4]]>>1
+	id[1] = decoder[src[1]]<<6 | decoder[src[2]]<<1 | decoder[src[3]]>>4
+	id[0] = decoder[src[0]]<<3 | decoder[src[1]]>>2
 
 	return nil
 }

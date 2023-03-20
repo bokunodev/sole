@@ -6,13 +6,12 @@ import (
 )
 
 var (
-	epoch     = SnowflakeEpoch
-	counter   = uint16(666)
-	clusterID = uint8('a')
+	epoch    = SnowflakeEpoch
+	sequence = uint32(666)
 )
 
 func BenchmarkUIDGen(b *testing.B) {
-	g := New(epoch, counter, clusterID)
+	g := New(epoch, sequence)
 
 	var id ID
 	for i := 0; i < b.N; i++ {
@@ -23,7 +22,7 @@ func BenchmarkUIDGen(b *testing.B) {
 
 func BenchmarkUIDParse(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_, err := Parse("017PH8LZ0ADGPBFJ")
+		_, err := Parse("2X35DGR00019Q470")
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -31,7 +30,7 @@ func BenchmarkUIDParse(b *testing.B) {
 }
 
 func TestGenerateParse(t *testing.T) {
-	g := New(epoch, counter, clusterID)
+	g := New(epoch, sequence)
 
 	id1 := g.NewID()
 	t.Log("id1:", id1)
@@ -51,7 +50,7 @@ func TestGenerateParse(t *testing.T) {
 }
 
 func TestJsonMarshalUnmarshal(t *testing.T) {
-	g := New(epoch, counter, clusterID)
+	g := New(epoch, sequence)
 
 	id1 := g.NewID()
 	t.Log("id1:", id1)
@@ -74,7 +73,7 @@ func TestJsonMarshalUnmarshal(t *testing.T) {
 }
 
 func TestExtract(t *testing.T) {
-	g := New(epoch, counter, clusterID)
+	g := New(epoch, sequence)
 
 	id1 := g.NewID()
 	t.Log("id1:", id1)
@@ -82,7 +81,7 @@ func TestExtract(t *testing.T) {
 }
 
 func TestDatabaseSQLValuerScanner(t *testing.T) {
-	g := New(epoch, counter, clusterID)
+	g := New(epoch, sequence)
 
 	id1 := g.NewID()
 	t.Log("id1:", id1)
