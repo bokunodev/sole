@@ -1,4 +1,4 @@
-package uid
+package sole
 
 import "core:strings"
 import "core:crypto"
@@ -18,10 +18,9 @@ charset_lower := "0123456789acdefghjklmnpqrtuvwxyz"
 @(private)
 _length_str :: 16
 
-// - 1 byte cluster id
 // - 4 byte unix second timstamp in bigendian order
-// - 2 byte sequence in bigendian order
-// - 3 byte random
+// - 4 byte sequence in bigendian order
+// - 2 byte random
 @(private)
 _length_byt :: 10
 
@@ -33,8 +32,8 @@ snowflake_epoch :: i64(1288834974)
 
 // _decoder maps lookup table was stolen from [solutionroute/rid](https://github.com/solutionroute/rid)
 @(private)
-_decoder := [0xff]byte {
-	0 ..< 0xff = _byte_max,
+_decoder := [256]byte {
+	0 ..< 256 = _byte_max,
 }
 
 @(init)
@@ -49,6 +48,7 @@ _decoder_init :: proc() {
 }
 
 @(private)
+// for testing purposes, to allow me to mock the timestamp.
 now_proc :: #type proc(_: i64) -> i64
 
 @(private)
@@ -69,7 +69,7 @@ Generator :: struct {
 }
 
 // init, properly initialize a `Generator`
-init :: #force_inline proc(gen: ^Generator, epoch: i64, sequence: u32, cluster_id: u8) {
+init :: #force_inline proc(gen: ^Generator, epoch: i64, sequence: u32) {
 	gen._Generator.epoch = epoch
 	gen._Generator.sequence = sequence
 	gen._Generator.init = true
@@ -78,8 +78,8 @@ init :: #force_inline proc(gen: ^Generator, epoch: i64, sequence: u32, cluster_i
 
 UID :: [_length_byt]byte
 
-// generate_uid, generates a new `UID`
-generate_uid :: proc(gen: ^Generator) -> (uid: UID) {
+// generate, generates a new `UID`
+generate :: proc(gen: ^Generator) -> (uid: UID) {
 	if !gen._Generator.init {
 		panic("generator is not properly initialized")
 	}
