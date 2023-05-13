@@ -1,4 +1,4 @@
-package uid
+package sole
 
 import (
 	"crypto/rand"
